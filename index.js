@@ -1,212 +1,168 @@
-const express = require('express')
-const app = express()
-const cors = require('cors')
-require('dotenv').config()
-const mongoose = require('mongoose')
-const bp = require('body-parser');
+const express = require("express");
+const app = express();
+const cors = require("cors");
+require("dotenv").config();
 
-mongoose.connect(process.env['MONGO_URI'], { useNewUrlParser: true, useUnifiedTopology: true }).then(()=>{
-  console.log('database connected.')
-}).catch((err) => console.log(err.message));
-
-//Importing MongoDB Models for Users and Exercises, and custom function Search
-const User = require('./models/user');
-const Exercise = require('./models/exercise');
-const Search = require('./actions/usersearch.js')
-
-app.use(cors())
-app.use(express.static('public'))
-app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/views/index.html')
+app.use(cors());
+app.use(express.static("public"));
+app.get("/", (req, res) => {
+  res.sendFile(__dirname + "/views/index.html");
 });
 
-app.use("/api/users", bp.urlencoded({extended: false}));
-app.use(bp.json());
+// --------------CHALLENGE--------------
+// First step is to create a free MongoDB project and get your Cluster API key
+// Create a .env file in root directory and declare a new variable called "DATABASE_URL" and initialize it with your Project key
+const mongoose = require("mongoose");
+const Schema = mongoose.Schema;
 
-//Exercise Tracker Add New Users and View All Users
-app.route('/api/users')
-  //Viewing a list of user without displaying their auth key #Custom Search.listUser function
-   .get((req, res) => {
-      Search.listUser()
-            .then(list => {
-              res.send(list);
-            })
-            .catch(err => {
-                console.log(err);
-                res.send("An Error has occured.");
+// Connection to MongoDB databse
+mongoose.set("strictQuery", false);
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => {
+    console.log("MongoDB Connection Successful");
+  })
+  .catch((err) => {
+    console.log(err);
+  });
+
+// Created User and Exercise schema in "models" folder -> User.js, Exercise.js
+// Import both User and Exercise schema
+const User = require("./models/user");
+const Exercise = require("./models/exercise");
+
+// urlencoded is a middleware and the main objective of this method is to parse the incoming request with urlencoded payloads and is based upon the body-parser.
+app.use(
+  express.urlencoded({
+    limit: "10mb",
+    extended: true,
+  }),
+);
+
+// Create New User API endpoint
+app.post("/api/users", async (req, res) => {
+  try {
+    const userName = req.body.username;
+
+    // Check if "userName" already exists in User database
+    const userObj = await User.findOne({ username: userName });
+    if (userObj)
+      return res.json({ error: "User with the given username already exists" });
+
+    // Create a new User in database
+    const user = await new User({
+      username: userName,
+    }).save();
+
+    res.json(user);
+  } catch (error) {
+    return res.json({ error: error.message });
+  }
+});
+
+// Get User ID API endpoint
+app.post("/api/userID", async (req, res) => {
+  try {
+    const userName = req.body.username;
+
+    // Check if "userName" already exists in User database
+    const userObj = await User.findOne({ username: userName });
+    if (userObj) return res.json(userObj);
+    res.json({ error: `No ID found for ${userName}` });
+  } catch (error) {
+    return res.json({ error: error.message });
+  }
+});
+
+// Get all users
+app.get("/api/users", async (req, res) => {
+  try {
+    const user = await User.find().select("-__v");
+    res.json(user);
+  } catch (error) {
+    return res.json({ error: error.message });
+  }
+});
+
+// Create User's exercise in database
+app.post("/api/users/:_id/exercises", async (req, res) => {
+  try {
+    const id = req.params._id;
+
+    // Check if "userName" already exists in User database
+    const user = await User.findById(id);
+    if (!user)
+      return res.json({ error: "User of the given 'id' doesn't exists" });
+
+    const { description, duration, date } = req.body;
+
+    if (!description)
+      return res.json({
+        error: "Please provide Exercise description to proceed",
+      });
+    if (!duration)
+      return res.json({ error: "Please provide Exercise duration to proceed" });
+
+    const exercise = await new Exercise({
+      user_id: user._id,
+      description: description,
+      duration: duration,
+      date: date ? new Date(date) : new Date(),
+    }).save();
+
+    res.json({
+      _id: user.id,
+      username: user.username,
+      description: exercise.description,
+      duration: exercise.duration,
+      date: new Date(exercise.date).toDateString(),
     });
-   }) 
-  //HTML form
-   .post((req,res) => {
-     const user = req.body.username;
-     User.findOne({username: user}, (err, found) => {
-       if (err) {
-         console.log(err);
-         return;
-       }
-       //Check if user exists
-       if (found) {
-         res.json({"username": found.username, "_id": found._id, "Status": "Existing User Found"});
-       } else {
-         //If not, create new user
-         const newuser = new User (
-           {username: user}
-         );
-         newuser.save()
-                .then(saved => {
-                  res.json({"username": saved.username, "_id": saved._id, "AuthKey": saved.authKey, "Status": "New User Created! Save your AuthKey! Currently there is no way to retrieve your AuthKey!"})
-                })
-                .catch(err => {
-                  console.log(err);
-                  res.send("An error has occured!");
-                });
-       }
-     });
-   });
-
-//#Exercise Tracker Log Exercises
-app.post('/api/users/:_id/exercises', (req, res) => {
-     //#Variables from the html form
-      const userId = req.body[':_id'] || req.params['_id'];
-      const userAuthKey = req.body.authkey;
-      const exDesc = req.body.description;
-      const exDura = req.body.duration;
-      const exDate = req.body.date;
-      const validId = /^[a-f\d]{24}$/;
-      //#check if user ID is the correct format (MongoDB Obj ID, hex24)
-      if (validId.test(userId) === false) {
-        res.send("Invalid UserID Format. It must be a single String of 12 bytes or a string of 24 hex characters");
-      } else {
-        //#If ID is correct format, check if user exists
-      User.findOne({_id: userId}, (err, found) => {
-        if (!found) {
-              res.send("User Not Found. Please Register with 'Create a New User'.");
-            } else {
-              //#if user exists, check if their auth key is correct
-              if (userAuthKey !== found.authKey) {
-                  res.status(403).send("Auth Key Incorrect");
-                } else { 
-                  //#if their auth key is correct, log user's exercise event
-                  const newExercise = new Exercise ({
-                      username: found.username,
-                      description: exDesc,
-                      duration: exDura,
-                    });
-                  //#if date is entered, register the entered date, otherwise it defaults
-                  if (exDate) {
-                    newExercise.date = exDate;
-                  }
-                  //#save and response the json
-                  newExercise.save()
-                             .then(saved => {
-                               res.json({
-                                 _id: userId,
-                                 username: saved.username,
-                                 description: saved.description,
-                                 duration: saved.duration,
-                                 date: saved.date.toDateString()
-                               });
-                             })
-                             .catch(err => {
-                               console.log(err);
-                               res.send("An Error has occured.");
-                             });
-                }
-            }
-      });       
-   }
+  } catch (error) {
+    return res.json({
+      error: "Error adding Exercise... Try agian after some time",
+    });
+    // {"error":"Cast to ObjectId failed for value \"a\" (type string) at path \"_id\" for model \"User\""} <-- When wrong user id passed
+  }
 });
 
-//Exercise Tracker Get User Exercise Log
-app.route('/api/users/:_id/logs')
-   .get((req, res) => {
-     const id = req.params._id;
-     let from = req.query.from;
-     let to = req.query.to;
-     let limit = req.query.limit;
+// Get User's exercise log
+app.get("/api/users/:_id/logs", async (req, res) => {
+  const id = req.params._id;
+  const { from, to, limit } = req.query;
 
-     if (from) {
-    from = new Date(from);
-    if (from == "Invalid Date") {
-      res.json("Invalid Date Entered");
-      return;
-    }
+  const user = await User.findById(id);
+  if (!user)
+    return res.json({ error: "User of the given 'id' doesn't exists" });
+
+  let dateObj = {};
+  if (from) {
+    dateObj["$gte"] = new Date(from); // gte -> grater than or equals to
   }
-
   if (to) {
-    to = new Date(to);
-    if (to == "Invalid Date") {
-      res.json("Invalid Date Entered");
-      return;
-    }
+    dateObj["$lte"] = new Date(to); // lte -> less than or equals to
   }
-     
-     User.findOne({_id: id}, (err, found) => {
-       //if user does not exist
-       if (!found) {
-          res.send("User Not Found. Please Register with 'Create a New User'.");
-        } else {
-          const usernameFound = found.username;
-          var objToRtr = {_id: id, username: usernameFound};
-          var logFilter = {username: usernameFound};
-          var dateFilter = {};
-          if (limit == null) {
-            limit = 999;
-          }
-          if (from) {
-            dateFilter["$gte"] = from;
-            if (to) {
-              dateFilter["$lte"] = to;
-            } else {
-              dateFilter["$lte"] = Date.now();
-            }
-          }
-         if (to) {
-            dateFilter["$lt"] = to;
-            dateFilter["$gte"] = new Date("1990-01-01");
-         }
+  let filter = {
+    user_id: id,
+  };
+  if (from || to) filter.date = dateObj;
 
-         if (to || from) {
-          logFilter.date = dateFilter;
-          }
+  const exercise = await Exercise.find({ user_id: id }).limit(+limit ?? 500);
+  if (!exercise)
+    return res.json({ error: "No exercise exists for the given 'id'" });
+  const log = exercise.map((e) => ({
+    description: e.description,
+    duration: e.duration,
+    date: e.date.toDateString(),
+  }));
 
-         Exercise.countDocuments(logFilter, (err, data) => {
-           if (err) {return console.log(err);}
-           let count = data;
-           if (limit && limit < count) {
-             count = limit;
-           }
-           objToRtr["count"] = count;
+  res.json({
+    username: user.username,
+    count: exercise.length,
+    _id: exercise.user_id,
+    log,
+  });
+});
 
-           Exercise.find(logFilter, (err, data) => {
-             if (err) {return console.log(err);}
-
-             let logArray = [];
-             let subObj = {};
-             let count = 0;
-
-             data.forEach((item) => {
-               count += 1;
-               if (!limit || count <= limit) {
-                 subObj = {};
-                 subObj.description = item.description;
-                 subObj.duration = item.duration;
-                 subObj.date = item.date.toDateString();
-                 logArray.push(subObj);
-               }
-             });
-
-             objToRtr["log"] = logArray;
-
-             res.json(objToRtr);
-           });
-         });
-        }
-     });  
-   });
-
-//include total exercise count by objects retrieved
-
-const listener = app.listen(process.env.PORT || 3000, () => {
-  console.log('Your app is listening on port ' + listener.address().port)
-})
+const listener = app.listen(process.env.PORT || 3004, () => {
+  console.log("Your app is listening on port " + listener.address().port);
+});
