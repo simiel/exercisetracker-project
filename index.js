@@ -10,9 +10,9 @@ mongoose.connect(process.env['MONGO_URI'], { useNewUrlParser: true, useUnifiedTo
 }).catch((err) => console.log(err.message));
 
 //Importing MongoDB Models for Users and Exercises, and custom function Search
-const User = require('./dbmodels/user');
-const Exercise = require('./dbmodels/exercise');
-const Search = require('./action/usersearch.js')
+const User = require('./models/user');
+const Exercise = require('./models/exercise');
+const Search = require('./actions/usersearch.js')
 
 app.use(cors())
 app.use(express.static('public'))
